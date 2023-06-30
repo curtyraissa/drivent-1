@@ -4,6 +4,7 @@ import { invalidDataError, notFoundError } from '@/errors';
 import addressRepository, { CreateAddressParams } from '@/repositories/address-repository';
 import enrollmentRepository, { CreateEnrollmentParams } from '@/repositories/enrollment-repository';
 import { exclude } from '@/utils/prisma-utils';
+import httpStatus = require('http-status');
 
 // TODO - Receber o CEP por parâmetro nesta função.
 async function getAddressFromCEP(cep: string) {
@@ -11,7 +12,7 @@ async function getAddressFromCEP(cep: string) {
   // FIXME: está com CEP fixo!
   const result = await request.get(`${process.env.VIA_CEP_API}/${cep}/json/`);
 
-  if (!result.data) {
+  if (!result.data || result.status == httpStatus.BAD_REQUEST || result.data.erro) { 
     throw notFoundError();
   }
 
@@ -48,17 +49,20 @@ type GetAddressResult = Omit<Address, 'createdAt' | 'updatedAt' | 'enrollmentId'
 async function createOrUpdateEnrollmentWithAddress(params: CreateOrUpdateEnrollmentWithAddress) {
   const enrollment = exclude(params, 'address');
   const address = getAddressForUpsert(params.address);
-
-  // TODO - Verificar se o CEP é válido antes de associar ao enrollment.
-  const cep = address.cep.replace(/\D/g, ''); // Remover caracteres não numéricos
-
-  if (cep.length !== 8) {
-    throw invalidDataError(['CEP inválido']);
+  const cep = address.cep;
+  const result = await request.get(`${process.env.VIA_CEP_API}/${cep}/json/`);
+  if (!result.data || result.status == httpStatus.BAD_REQUEST || result.data.erro) {
+    throw invalidDataError(['invalid CEP']);
   }
+  // TODO - Verificar se o CEP é válido antes de associar ao enrollment.
+  // const cep = address.cep.replace(/\D/g, ''); // Remover caracteres não numéricos
+  // if (cep.length !== 8) {
+  //   throw invalidDataError(['CEP inválido']);
+  // }
   const newEnrollment = await enrollmentRepository.upsert(params.userId, enrollment, exclude(enrollment, 'userId'));
 
   await addressRepository.upsert(newEnrollment.id, address, address);
-}
+  }
 
 function getAddressForUpsert(address: CreateAddressParams) {
   return {
